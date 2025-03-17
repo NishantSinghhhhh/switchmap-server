@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server.containerfile
+    container_name: switchmap-server
+    user: "${API_UID}:${API_GID}"
+    volumes:
+      - .:/home/switchmap/server
+      - /home/switchmap/server/node_modules
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:password@db:5432/switchmap
+      - API_PORT=7000
+    ports:
+      - "7000:7000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - switchmap-network
+
+  db:
+    image: postgres:14
+    container_name: switchmap-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: switchmap
+    ports:
+      - "5432:5432"
+    networks:
+      - switchmap-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  switchmap-network:
+    driver: bridge
