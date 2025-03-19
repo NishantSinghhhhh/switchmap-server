@@ -1,0 +1,41 @@
+import type { FastifyInstance } from "fastify";
+import { createMockLogger } from "test/utilities/mockLogger";
+import { type MockInstance, vi } from "vitest";
+import type { ExplicitGraphQLContext, GraphQLContext } from "~/src/graphql/context";
+import { createMockDrizzleClient } from "../drizzleClientMock";
+import { createMockPubSub } from "../pubsubMock";
+
+/**
+ * Function to create a **mock GraphQL context** with exposed mock instances for SwitchMap Server.
+ * @returns An object containing the context and exposed mocks for testing.
+ */
+export function createMockGraphQLContext() {
+	// Create mock instances with proper typing
+	const mockDrizzleClient = createMockDrizzleClient();
+	const mockPubSub = createMockPubSub();
+
+	// Create the explicit context
+	const explicitContext: ExplicitGraphQLContext = {
+		drizzleClient: mockDrizzleClient as unknown as FastifyInstance["drizzleClient"],
+		envConfig: { API_BASE_URL: "http://localhost:5000" }, // SwitchMap Server API base URL
+		log: createMockLogger(),
+	};
+
+	// Create the implicit context
+	const implicitContext = { pubsub: mockPubSub };
+
+	// Combine them into the full context
+	const context: GraphQLContext = {
+		...explicitContext,
+		...implicitContext,
+	};
+
+	// Return both the context and exposed mocks for easier testing
+	return {
+		context,
+		mocks: {
+			drizzleClient: mockDrizzleClient,
+			pubsub: mockPubSub,
+		},
+	};
+}
