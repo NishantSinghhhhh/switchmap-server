@@ -1,0 +1,9 @@
+import graphene
+from models import DeviceModel
+from database import db_session
+
+class Query(graphene.ObjectType):
+    devices = graphene.List(DeviceType)  # Defines the field
+
+    def resolve_devices(self, info):
+        return db_session.query(DeviceModel).all()  # Fetch all devices
