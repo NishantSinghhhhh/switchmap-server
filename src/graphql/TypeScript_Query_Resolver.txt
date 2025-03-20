@@ -1,0 +1,9 @@
+import { db } from "@/db";
+import { deviceTable } from "@/db/schema";
+import { resolver } from "@pothos/core";
+
+export const Query = {
+  devices: resolver(() => 
+    db.select().from(deviceTable)  // Fetch all devices
+  ),
+};
