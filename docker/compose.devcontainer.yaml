@@ -1,21 +1,20 @@
 version: "3.8"
 
 services:
-  server:
+  api:
     build:
       context: .
-      dockerfile: server.containerfile
-    container_name: switchmap-server
+      dockerfile: api.Dockerfile  # Or "Dockerfile" if renamed
+    container_name: switchmap-api
     user: "${API_UID}:${API_GID}"
     volumes:
-      - .:/home/switchmap/server
-      - /home/switchmap/server/node_modules
+      - .:/home/switchmap/api
     environment:
-      - NODE_ENV=development
       - DATABASE_URL=postgres://postgres:password@db:5432/switchmap
-      - API_PORT=7000
+      - API_PORT=8000
+      - PYTHONUNBUFFERED=1
     ports:
-      - "7000:7000"
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
