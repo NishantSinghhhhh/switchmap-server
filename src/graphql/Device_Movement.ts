@@ -1,10 +1,8 @@
-const { ApolloServer, gql, PubSub } = require('apollo-server');
+import asyncio
+from ariadne import gql, QueryType, MutationType, SubscriptionType, make_executable_schema
 
-const pubsub = new PubSub();
-const MOVEMENT_OCCURRED = 'MOVEMENT_OCCURRED';
-
-//the GraphQL schema
-const typeDefs = gql`
+# Schema definition
+type_defs = gql("""
   type DeviceMovement {
     id: ID!
     deviceId: String!
@@ -17,12 +15,10 @@ const typeDefs = gql`
   }
 
   type Query {
-    # Returns all device movement logs
     deviceMovements: [DeviceMovement!]!
   }
 
   type Mutation {
-    # Inserts a new device movement event and returns it
     addDeviceMovement(
       deviceId: String!
       deviceName: String!
@@ -35,41 +31,60 @@ const typeDefs = gql`
   }
 
   type Subscription {
-    # Publishes real-time updates whenever a new movement event occurs
     movementOccurred: DeviceMovement!
   }
-`;
+""")
 
-// For demonstration, I use an in-memory array to store events.
-// In production, We will perform INSERT/UPDATE operations on our Postgres database.
-let deviceMovements = [];
-let idCounter = 1;
+# Simple in-memory store and pubsub
+device_movements = []
+id_counter = 1
+MOVEMENT_OCCURRED = "MOVEMENT_OCCURRED"
 
-const resolvers = {
-  Query: {
-    deviceMovements: () => {
-      // Here I am  querying our Postgres DB.
-      return deviceMovements;
-    },
-  },
-  Mutation: {
-    addDeviceMovement: (_, args) => {
-      // Creating a new movement event record.
-      const newMovement = { id: idCounter++, ...args };
-      
-      // In production, I will insert this record into our Postgres database.
-      deviceMovements.push(newMovement);
+class PubSub:
+    def __init__(self):
+        self.subscribers = {}
 
-      // Publish this event for any subscribers (real-time dashboard updates).
-      pubsub.publish(MOVEMENT_OCCURRED, { movementOccurred: newMovement });
+    async def publish(self, event, data):
+        if event in self.subscribers:
+            for queue in self.subscribers[event]:
+                await queue.put(data)
 
-      return newMovement;
-    },
-  },
-  Subscription: {
-    movementOccurred: {
-      subscribe: () => pubsub.asyncIterator([MOVEMENT_OCCURRED]),
-    },
-  },
-};
+    async def subscribe(self, event):
+        queue = asyncio.Queue()
+        self.subscribers.setdefault(event, []).append(queue)
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            self.subscribers[event].remove(queue)
 
+pubsub = PubSub()
+
+# Resolvers
+query = QueryType()
+mutation = MutationType()
+subscription = SubscriptionType()
+
+@query.field("deviceMovements")
+def resolve_device_movements(_, info):
+    return device_movements
+
+@mutation.field("addDeviceMovement")
+async def resolve_add_device_movement(_, info, **args):
+    global id_counter
+    new_movement = { "id": id_counter, **args }
+    id_counter += 1
+    device_movements.append(new_movement)
+    await pubsub.publish(MOVEMENT_OCCURRED, { "movementOccurred": new_movement })
+    return new_movement
+
+@subscription.source("movementOccurred")
+async def source_movement_occurred(_, info):
+    async for event in pubsub.subscribe(MOVEMENT_OCCURRED):
+        yield event
+
+@subscription.field("movementOccurred")
+def resolve_movement_occurred(event, info):
+    return event["movementOccurred"]
+
+schema = make_executable_schema(type_defs, query, mutation, subscription)
