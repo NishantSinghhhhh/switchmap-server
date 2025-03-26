@@ -1,10 +1,39 @@
-const { ApolloServer, gql, PubSub } = require('apollo-server');
-const pubsub = new PubSub();
-const BANDWIDTH_UPDATED = 'BANDWIDTH_UPDATED';
+import asyncio
+from ariadne import (
+    gql,
+    QueryType,
+    MutationType,
+    SubscriptionType,
+    make_executable_schema
+)
 
-let bandwidthDataRecords = []; // In-memory storage for demonstration
+# PubSub setup
+class PubSub:
+    def __init__(self):
+        self.subscribers = {}
 
-const typeDefs = gql`
+    async def publish(self, event, payload):
+        if event in self.subscribers:
+            for queue in self.subscribers[event]:
+                await queue.put(payload)
+
+    async def subscribe(self, event):
+        queue = asyncio.Queue()
+        self.subscribers.setdefault(event, []).append(queue)
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            self.subscribers[event].remove(queue)
+
+pubsub = PubSub()
+BANDWIDTH_UPDATED = "BANDWIDTH_UPDATED"
+
+# In-memory store (placeholder for PostgreSQL)
+bandwidth_data_records = []
+
+# Schema definition
+type_defs = gql("""
   type BandwidthData {
     deviceId: String!
     interfaceId: String!
@@ -30,35 +59,30 @@ const typeDefs = gql`
   type Subscription {
     bandwidthUpdated: BandwidthData!
   }
-`;
+""")
 
-const resolvers = {
-  Query: {
-    bandwidthUsage: () => {
-      // Here, I would query Postgres database.
-      return bandwidthDataRecords;
-    },
-  },
-  Mutation: {
-    addBandwidthData: (_, args) => {
-      const newRecord = { ...args };
-      // Inserting the new record into the database (here, just an array).
-      bandwidthDataRecords.push(newRecord);
+# Resolvers
+query = QueryType()
+mutation = MutationType()
+subscription = SubscriptionType()
 
-      // Publishing the update for real-time clients.
-      pubsub.publish(BANDWIDTH_UPDATED, { bandwidthUpdated: newRecord });
-      return newRecord;
-    },
-  },
-  Subscription: {
-    bandwidthUpdated: {
-      subscribe: () => pubsub.asyncIterator([BANDWIDTH_UPDATED]),
-    },
-  },
-};
+@query.field("bandwidthUsage")
+def resolve_bandwidth_usage(_, info):
+    return bandwidth_data_records
 
-const server = new ApolloServer({ typeDefs, resolvers });
+@mutation.field("addBandwidthData")
+async def resolve_add_bandwidth_data(_, info, **args):
+    bandwidth_data_records.append(args)
+    await pubsub.publish(BANDWIDTH_UPDATED, {"bandwidthUpdated": args})
+    return args
 
-server.listen().then(({ url }) => {
-  console.log(`Server ready at ${url}`);
-});
+@subscription.source("bandwidthUpdated")
+async def source_bandwidth_updated(_, info):
+    async for payload in pubsub.subscribe(BANDWIDTH_UPDATED):
+        yield payload
+
+@subscription.field("bandwidthUpdated")
+def resolve_bandwidth_updated(event, info):
+    return event["bandwidthUpdated"]
+
+schema = make_executable_schema(type_defs, query, mutation, subscription)
