@@ -1,55 +1,39 @@
-import { PrismaClient } from '@prisma/client';
-import { PubSub } from 'graphql-subscriptions';
+import asyncio
+from ariadne import SubscriptionType
+from typing import AsyncGenerator, Dict, List
 
-const prisma = new PrismaClient();
-const pubsub = new PubSub();
-const TOPOLOGY_UPDATED = 'TOPOLOGY_UPDATED';
+class SimplePubSub:
+    def __init__(self):
+        self.subscribers: Dict[str, List[asyncio.Queue]] = {}
 
-const resolvers = {
-  Mutation: {
-    // I handle adding new topology data sent from the Poller/Core
-    addTopology: async (_: any, args: { nodes: string[], links: any[] }) => {
-      try {
-        // First, I insert nodes into the database (upserting to avoid duplicates)
-        for (const nodeId of args.nodes) {
-          await prisma.node.upsert({
-            where: { id: nodeId },
-            update: {},
-            create: { id: nodeId },
-          });
-        }
+    async def publish(self, event_name: str, payload: dict):
+        queues = self.subscribers.get(event_name, [])
+        for queue in queues:
+            await queue.put(payload)
 
-        // Now I add the connections (links) between the nodes
-        for (const link of args.links) {
-          await prisma.link.create({
-            data: {
-              sourceId: link.source,
-              targetId: link.target,
-              localPort: link.localPort,
-              remotePort: link.remotePort,
-            },
-          });
-        }
+    async def subscribe(self, event_name: str) -> AsyncGenerator[dict, None]:
+        queue = asyncio.Queue()
+        if event_name not in self.subscribers:
+            self.subscribers[event_name] = []
+        self.subscribers[event_name].append(queue)
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            self.subscribers[event_name].remove(queue)
 
-        // Once data insertion is successful, I fetch the updated topology data
-        const updatedNodes = await prisma.node.findMany();
-        const updatedLinks = await prisma.link.findMany();
+# Creating PubSub instance
+pubsub = SimplePubSub()
+TOPOLOGY_UPDATED = "TOPOLOGY_UPDATED"
 
-        // Finally, I notify all subscribed frontend clients about this update
-        pubsub.publish(TOPOLOGY_UPDATED, {
-          topologyUpdated: { nodes: updatedNodes, links: updatedLinks },
-        });
+# SubscriptionType resolver
+subscription = SubscriptionType()
 
-        return { success: true, message: 'Topology added successfully' };
-      },
-  },
+@subscription.source("topologyUpdated")
+async def source_topology_updated(_, info):
+    async for payload in pubsub.subscribe(TOPOLOGY_UPDATED):
+        yield payload
 
-  Subscription: {
-    // I manage subscriptions, notifying frontend components whenever topology data changes
-    topologyUpdated: {
-      subscribe: () => pubsub.asyncIterator([TOPOLOGY_UPDATED]),
-    },
-  },
-};
-
-export default resolvers;
+@subscription.field("topologyUpdated")
+def resolve_topology_updated(event, info):
+    return event["topologyUpdated"]
