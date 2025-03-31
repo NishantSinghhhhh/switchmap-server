@@ -1,0 +1,72 @@
+"This query gives us data in batches"
+
+import base64
+
+def interfaces(self, first=None, after=None):
+    """Return L1 data for Ethernet ports only with pagination.
+
+    Args:
+        first: (Optional) Maximum number of items to return.
+        after: (Optional) Base64 encoded cursor representing the offset.
+
+    Returns:
+        List of InterfaceDetail objects for Ethernet ports.
+    """
+    # Initialize key variables
+    result = []
+    l1interfaces = []
+
+    if bool(self._device) is True:
+        # Decode the cursor; default to offset 0 if not provided or on error
+        offset = 0
+        if after:
+            try:
+                offset = int(base64.b64decode(after).decode('utf-8'))
+            except Exception:
+                offset = 0
+
+        # Get interface data with pagination applied.
+        statement = (
+            select(_L1Interface)
+            .where(_L1Interface.idx_device == self._device.idx_device)
+            .order_by(_L1Interface.idx_l1interface)
+            .offset(offset)
+        )
+        if first:
+            statement = statement.limit(first)
+
+        l1_rows = db.db_select_row(1199, statement)
+        for row in l1_rows:
+            l1interfaces.append(_rows.l1interface(row))
+
+        # Loop through each interface to get additional details
+        for l1int in l1interfaces:
+            macresult = []
+            idx_macs = []
+            vlans = []
+
+            # Get the MAC idx_mac values associated with the interface.
+            statement = select(_MacPort).where(
+                l1int.idx_l1interface == _MacPort.idx_l1interface
+            )
+            mac_rows = db.db_select_row(1200, statement)
+            for row in mac_rows:
+                idx_macs.append(row.idx_mac)
+
+            # Get the MacDetail values
+            for item in idx_macs:
+                macresult.extend(macdetail.by_idx_mac(item))
+
+            # Get Vlan data
+            vlans = vlan.by_idx_l1interface(l1int.idx_l1interface)
+
+            # Update the result with the full interface details.
+            result.append(
+                InterfaceDetail(
+                    RL1Interface=l1int,
+                    MacDetails=macresult,
+                    RVlans=vlans
+                )
+            )
+
+    return result
