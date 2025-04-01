@@ -1,39 +1,42 @@
-import asyncio
-from ariadne import SubscriptionType
-from typing import AsyncGenerator, Dict, List
+from ariadne import QueryType
 
-class SimplePubSub:
-    def __init__(self):
-        self.subscribers: Dict[str, List[asyncio.Queue]] = {}
+# I create an instance of the Query type for my GraphQL API.
+query = QueryType()
 
-    async def publish(self, event_name: str, payload: dict):
-        queues = self.subscribers.get(event_name, [])
-        for queue in queues:
-            await queue.put(payload)
+@query.field("networkTopology")
+def resolve_network_topology(_, info):
+    # I simulate the network topology data here.
+    # In a real-world application, I might replace this with a database query or an external API call.
+    topology_data = {
+        "nodes": [
+            {"id": "Device-1001"},  # I consider this a local device with ID 1001.
+            {"id": "Switch-B"},     # This is a remote device, Switch-B.
+            {"id": "Switch-C"},     # Similarly, Switch-C is another remote device.
+            {"id": "Device-1002"},  # Another local device with ID 1002.
+            {"id": "Switch-D"}      # And here is a remote device, Switch-D.
+        ],
+        "links": [
+            {
+                "source": "Device-1001",
+                "target": "Switch-B",
+                "localPort": "Gig0/1",
+                "remotePort": "Gig0/24"
+            },  # I define a connection from Device-1001 to Switch-B.
+            {
+                "source": "Device-1001",
+                "target": "Switch-C",
+                "localPort": "Gig0/2",
+                "remotePort": "Gig0/12"
+            },  # Here, Device-1001 is also connected to Switch-C.
+            {
+                "source": "Device-1002",
+                "target": "Switch-D",
+                "localPort": "Gig1/1",
+                "remotePort": "Gig1/24"
+            }   # Lastly, I define a connection from Device-1002 to Switch-D.
+        ]
+    }
+    # I return the simulated topology data so the dashboard can display it.
+    return topology_data
 
-    async def subscribe(self, event_name: str) -> AsyncGenerator[dict, None]:
-        queue = asyncio.Queue()
-        if event_name not in self.subscribers:
-            self.subscribers[event_name] = []
-        self.subscribers[event_name].append(queue)
-        try:
-            while True:
-                yield await queue.get()
-        finally:
-            self.subscribers[event_name].remove(queue)
-
-# Creating PubSub instance
-pubsub = SimplePubSub()
-TOPOLOGY_UPDATED = "TOPOLOGY_UPDATED"
-
-# SubscriptionType resolver
-subscription = SubscriptionType()
-
-@subscription.source("topologyUpdated")
-async def source_topology_updated(_, info):
-    async for payload in pubsub.subscribe(TOPOLOGY_UPDATED):
-        yield payload
-
-@subscription.field("topologyUpdated")
-def resolve_topology_updated(event, info):
-    return event["topologyUpdated"]
+# I can now include this query in my overall GraphQL schema.
