@@ -1,90 +1,45 @@
-import asyncio
-from ariadne import gql, QueryType, MutationType, SubscriptionType, make_executable_schema
+import graphene
 
-# Schema definition
-type_defs = gql("""
-  type DeviceMovement {
-    id: ID!
-    deviceId: String!
-    deviceName: String!
-    fromSwitch: String!
-    fromPort: String!
-    toSwitch: String!
-    toPort: String!
-    timestamp: String!
-  }
+# I define a GraphQL type for a single movement event.
+class MovementEvent(graphene.ObjectType):
+    ip = graphene.String()
+    fromLocation = graphene.String()
+    toLocation = graphene.String()
+    timestamp = graphene.String()
 
-  type Query {
-    deviceMovements: [DeviceMovement!]!
-  }
+# I define a type to hold the paginated result including metadata.
+class MovementEventsResult(graphene.ObjectType):
+    events = graphene.List(MovementEvent)
+    totalCount = graphene.Int()
+    page = graphene.Int()
+    limit = graphene.Int()
 
-  type Mutation {
-    addDeviceMovement(
-      deviceId: String!
-      deviceName: String!
-      fromSwitch: String!
-      fromPort: String!
-      toSwitch: String!
-      toPort: String!
-      timestamp: String!
-    ): DeviceMovement!
-  }
+# I define my Query class to include a field for fetching movement events.
+class Query(graphene.ObjectType):
+    movement_events = graphene.Field(
+        MovementEventsResult,
+        page=graphene.Int(required=False, default_value=1),
+        limit=graphene.Int(required=False, default_value=10)
+    )
 
-  type Subscription {
-    movementOccurred: DeviceMovement!
-  }
-""")
+    def resolve_movement_events(self, info, page, limit):
+        # I calculate the offset based on the provided page number and limit.
+        offset = (page - 1) * limit
 
-# Simple in-memory store and pubsub
-device_movements = []
-id_counter = 1
-MOVEMENT_OCCURRED = "MOVEMENT_OCCURRED"
+        # I fetch a subset of movement events from the database.
+        # Here, I assume that _movement.get_events is a helper function that accepts offset and limit.
+        events = _movement.get_events(offset=offset, limit=limit)
 
-class PubSub:
-    def __init__(self):
-        self.subscribers = {}
+        # I also retrieve the total count of movement events for pagination metadata.
+        total_count = _movement.get_total_events_count()
 
-    async def publish(self, event, data):
-        if event in self.subscribers:
-            for queue in self.subscribers[event]:
-                await queue.put(data)
+        # I return the paginated results along with the metadata.
+        return MovementEventsResult(
+            events=events,
+            totalCount=total_count,
+            page=page,
+            limit=limit
+        )
 
-    async def subscribe(self, event):
-        queue = asyncio.Queue()
-        self.subscribers.setdefault(event, []).append(queue)
-        try:
-            while True:
-                yield await queue.get()
-        finally:
-            self.subscribers[event].remove(queue)
-
-pubsub = PubSub()
-
-# Resolvers
-query = QueryType()
-mutation = MutationType()
-subscription = SubscriptionType()
-
-@query.field("deviceMovements")
-def resolve_device_movements(_, info):
-    return device_movements
-
-@mutation.field("addDeviceMovement")
-async def resolve_add_device_movement(_, info, **args):
-    global id_counter
-    new_movement = { "id": id_counter, **args }
-    id_counter += 1
-    device_movements.append(new_movement)
-    await pubsub.publish(MOVEMENT_OCCURRED, { "movementOccurred": new_movement })
-    return new_movement
-
-@subscription.source("movementOccurred")
-async def source_movement_occurred(_, info):
-    async for event in pubsub.subscribe(MOVEMENT_OCCURRED):
-        yield event
-
-@subscription.field("movementOccurred")
-def resolve_movement_occurred(event, info):
-    return event["movementOccurred"]
-
-schema = make_executable_schema(type_defs, query, mutation, subscription)
+# I create the GraphQL schema with my Query.
+schema = graphene.Schema(query=Query)
